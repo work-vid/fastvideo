@@ -278,7 +278,7 @@ function App() {
                         }
                         resolve();
                     });
-                    command.on("error", (error) => {
+                    command.on("error", (_error) => {
                         setLogs(prev => prev.map(l => l.file === file ? { ...l, status: 'error', msg: "Failed to spawn" } : l));
                         resolve();
                     });
