@@ -103,12 +103,17 @@ fn build_tree(path: &Path) -> Option<FileNode> {
 }
 
 #[tauri::command]
-async fn scan_project(root: String) -> Result<ScanResult, String> {
+async fn scan_project(root: String, general_mode: bool) -> Result<ScanResult, String> {
     let root_path = Path::new(&root);
-    let media_assets_path = root_path.join("MediaAssets");
+    
+    let path_to_scan = if general_mode {
+        root_path
+    } else {
+        &root_path.join("MediaAssets")
+    };
 
-    let media_tree = if media_assets_path.exists() {
-        build_tree(&media_assets_path)
+    let media_tree = if path_to_scan.exists() {
+        build_tree(path_to_scan)
     } else {
         None
     };
@@ -240,9 +245,12 @@ async fn compress_zip(source_dir: String, zip_path: String) -> Result<String, St
 }
 
 #[tauri::command]
-async fn copy_project(source: String, target: String) -> Result<usize, String> {
+async fn copy_project(source: String, target: String, excludes: Vec<String>) -> Result<usize, String> {
     let source_path = Path::new(&source);
     let target_path = Path::new(&target);
+    
+    // Use HashSet for faster lookups
+    let exclude_set: std::collections::HashSet<String> = excludes.into_iter().collect();
 
     if !source_path.exists() {
         return Err("Source directory does not exist".to_string());
@@ -265,6 +273,12 @@ async fn copy_project(source: String, target: String) -> Result<usize, String> {
             continue;
         }
 
+        // Check Exclusions (Absolute Path String)
+        let path_str = path.to_string_lossy().to_string();
+        if exclude_set.contains(&path_str) {
+            continue;
+        }
+
         // Calculate relative path
         let relative = match path.strip_prefix(source_path) {
             Ok(r) => r,
@@ -278,11 +292,6 @@ async fn copy_project(source: String, target: String) -> Result<usize, String> {
         let dest = target_path.join(relative);
 
         // AUTO-EXCLUDE: If the file being copied IS inside the target directory (e.g. recursive copy into self)
-        // Check if `path` starts with `target_abs`?
-        // Actually simplest is: if `path` == `target_path` or inside, skip.
-        // But `WalkDir` iterates source. If target is inside source, we encounter it.
-        // We must check if `dest` would be inside `source`? No.
-        // We must check if `path` (source file) IS the target folder or inside it.
         if path.starts_with(&target_abs) {
             continue;
         }

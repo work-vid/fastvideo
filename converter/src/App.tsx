@@ -86,12 +86,15 @@ function App() {
     const [progress, setProgress] = useState(0); // Overall
     const [fileProgress, setFileProgress] = useState(0); // Current File
     const [currentFile, setCurrentFile] = useState<string>("");
+    
+    // Mode State
+    const [optMode, setOptMode] = useState<'project' | 'folder'>('project');
 
     
     const [imgSettings, setImgSettings] = useState<ImageSettings>({
         convert_png: true,
         convert_jpg: true,
-        quality: 75
+        quality: 90
     });
 
 
@@ -133,17 +136,9 @@ function App() {
             let rootToScan = selected;
 
             if (type === 'file') {
+                setOptMode('project');
                 addLog(`Archive selected: ${basename(selected)}`, 'info');
                 addLog(`Extracting...`, 'process');
-                // Extract to temp
-                // Extract to temp
-                // const tempDir = await invoke<string>("get_default_temp_dir"); 
-                // JS side: can use `appDataDir`?
-                // Let's use `dirname(selected)` + `_temp_extract`? Risky clutter.
-                // Let's request a temp dir from backend or use `/tmp` logic?
-                // Easier: assume we can write to `dirname(selected)/.temp_extract` and hide it?
-                // Better: Use `copy_project` logic style?
-                // Let's assume we extract to `projectRoot/../.baetho_temp/filename`
                 
                 const parentDir = await dirname(selected);
                 const name = await basename(selected);
@@ -158,12 +153,17 @@ function App() {
                     addLog(`Extraction failed: ${e}`, 'error');
                     return;
                 }
+            } else {
+                setOptMode('folder');
             }
 
             setProjectRoot(rootToScan);
-            addLog(`Scanning project: ${rootToScan}`, 'info');
+            addLog(`Scanning ${type === 'file' ? 'project' : 'folder'}: ${rootToScan}`, 'info');
+            
             try {
-                const result = await invoke<ScanResult>("scan_project", { root: rootToScan });
+                // Pass general_mode: true if type is dir (folder mode)
+                const isGeneral = type === 'dir';
+                const result = await invoke<ScanResult>("scan_project", { root: rootToScan, generalMode: isGeneral });
                 setScanResult(result);
                 
                 // Calculate Extensions
@@ -172,11 +172,11 @@ function App() {
                     collectExtensions(result.media, exts);
                     setAvailableExtensions(exts);
                     setEnabledExtensions(exts); // Enable all by default
-                    addLog(`Found MediaAssets tree.`, 'success');
+                    addLog(isGeneral ? `Found files in folder.` : `Found MediaAssets tree.`, 'success');
                 } else {
-                    addLog(`No MediaAssets folder found.`, 'error');
+                    addLog(isGeneral ? `No files found.` : `No MediaAssets folder found.`, 'error');
                 }
-                addLog(`Found ${result.xmls.length} XML files.`, 'info');
+                if (!isGeneral) addLog(`Found ${result.xmls.length} XML files.`, 'info');
             } catch (e) {
                 addLog(`Scan failed: ${e}`, 'error');
             }
@@ -204,33 +204,33 @@ function App() {
         setSelectedPaths(next);
     };
 
+
+
     const runOptimizer = async () => {
         if (!projectRoot || !scanResult || selectedPaths.size === 0) return;
         setProcessing(true);
         abortRef.current = false;
         setProgress(0);
         
-        // 1. Create Layout Clone
-        const targetRoot = await join(projectRoot, "Optimized");
-        const optimizedMediaAssets = await join(targetRoot, "MediaAssets");
+        let targetRoot = "";
+        let optimizedMediaAssets = "";
 
-        addLog(`Creating optimized copy in: ${basename(targetRoot)}...`, 'process');
-        
-        try {
-             // Basic check to prevent nesting infinity if users pick root weirdly, though backend handles some.
-             if (targetRoot.startsWith(projectRoot) && targetRoot.length > projectRoot.length) {
-                 // Valid subset
-             }
-             
-             await invoke("copy_project", { source: projectRoot, target: targetRoot });
-             addLog(`Project copied successfully.`, 'success');
-        } catch (e) {
-             addLog(`Copy failed: ${e}`, 'error');
-             setProcessing(false);
-             return;
+        // 1. Setup Target Paths
+        if (optMode === 'folder') {
+            const parent = await dirname(projectRoot);
+            const name = await basename(projectRoot);
+            targetRoot = await join(parent, `${name}-optimized`);
+            optimizedMediaAssets = targetRoot; 
+        } else {
+            targetRoot = await join(projectRoot, "Optimized");
+            optimizedMediaAssets = await join(targetRoot, "MediaAssets");
         }
 
+        // Ensure Target Root Exists
+        await invoke("ensure_dir", { path: targetRoot });
+
         const mappings: Array<{ old_virtual_path: string, new_virtual_path: string }> = [];
+        const processedSourceFiles: string[] = [];
         
         // Filter only files from the tree (ignore folders in the set for processing loop)
         const filesToProcess = Array.from(selectedPaths).filter(p => {
@@ -238,9 +238,17 @@ function App() {
             return node && node.kind === 'file' && node.media_type && (node.media_type === 'image' || node.media_type === 'video');
         });
 
+        // Smart Count Filter (verify enabled extensions)
+        const validFiles = filesToProcess.filter(p => {
+             const node = findNode(scanResult.media!, p);
+             const ext = node?.name.split('.').pop()?.toLowerCase();
+             return ext && enabledExtensions.has(ext);
+        });
+
         let completed = 0;
         
-        for (const inputPath of filesToProcess) {
+        // 2. OPTIMIZATION PHASE
+        for (const inputPath of validFiles) {
             if (abortRef.current) break;
 
             const node = findNode(scanResult.media!, inputPath);
@@ -250,21 +258,22 @@ function App() {
             setCurrentFile(node.name);
 
             try {
-                // Calculate Target Path in "Optimized" folder
-                // relativeAbs = inputPath - projectRoot
+                // Calculate Target Path
                 let relativeAbs = inputPath.replace(projectRoot, ""); 
-                // Strip leading separators to ensure join works as relative
                 relativeAbs = relativeAbs.replace(/^[/\\]+/, "");
-
-                // Join handles separators
+                
                 let targetFile = await join(targetRoot, relativeAbs);
+                
+                // Ensure parent directory exists (Crucial since we haven't copied tree yet)
+                const parentDir = await dirname(targetFile);
+                await invoke("ensure_dir", { path: parentDir });
                 
                 // Determine format
                 const ext = await extname(inputPath);
                 const isImage = node.media_type === 'image';
                 const isVideo = node.media_type === 'video';
                 
-                let finalPath = targetFile; // final optimized file
+                let finalPath = targetFile; 
                 let converted = false;
 
                 if (isImage) {
@@ -273,41 +282,27 @@ function App() {
                     
                     if ((isPng && imgSettings.convert_png) || (isJpg && imgSettings.convert_jpg)) {
                          // Convert to WebP
-                         const parent = await dirname(targetFile);
-                         const name = await basename(targetFile, "." + ext);
-                         finalPath = await join(parent, name + ".webp");
+                         finalPath = await join(parentDir, await basename(targetFile, "." + ext) + ".webp");
                          
                          const args = [
                              "-y",
-                             "-i", inputPath, // Read from SOURCE (safe)
+                             "-i", inputPath, 
                              "-c:v", "libwebp",
                              "-q:v", imgSettings.quality.toString(),
-                             finalPath // Write to TARGET
+                             finalPath 
                          ];
                          
                          await runFfmpeg(args, (p) => setFileProgress(p));
                          setFileProgress(100);
                          converted = true;
-                         
-                         // Delete the COPIED original in target if it exists (it was copied in step 1)
-                         // targetFile is the .png in the Optimized folder
-                         await invoke("delete_file", { path: targetFile });
                     }
                 } else if (isVideo) {
                     // Convert to H.265
-                    // We output to .mp4. If source was .mov, we have .mov in target.
-                    // We write .mp4 to target. Then delete .mov in target.
+                    finalPath = await join(parentDir, await basename(targetFile, "." + ext) + ".mp4");
                     
-                    const parent = await dirname(targetFile);
-                    const name = await basename(targetFile, "." + ext);
-                    finalPath = await join(parent, name + ".mp4");
-                    
-                    // We render to a temp file first in case input=output (not case here, but good practice)
-                    const tempOutput = await join(parent, `${name}_opt_temp.mp4`);
-
                     const args = [
                         "-y", 
-                        "-i", inputPath, // Source
+                        "-i", inputPath, 
                         "-c:v", "libx265",
                         "-crf", "23",
                         "-preset", "fast",
@@ -321,36 +316,35 @@ function App() {
                     await runFfmpeg(args, (p) => setFileProgress(p));
                     setFileProgress(100);
                     converted = true;
-
-                    // If extension differs, delete old copied file
-                    if (finalPath !== targetFile) {
-                        await invoke("delete_file", { path: targetFile });
-                    }
                 }
                 
-                if (converted) {
-                    // Update Mappings
-                    // Virtual Paths are relative to MediaAssets.
-                    // Source: inputPath. Relative to Source/MediaAssets?
-                    // Target: finalPath. Relative to Target/MediaAssets?
-                    // actually the virtual path logic is:
-                    // XML says: imageURL="/R/img.png"
-                    // We want it to say: imageURL="/R/img.webp"
+                // If we didn't convert (e.g. extension not selected for conversion but selected for tree?),
+                // we should copy it manually?
+                // Actually, `validFiles` implies we intend to process it.
+                // If it falls through (e.g. an XML selected in tree??), we might need to handle copy.
+                // But filter says `image` or `video`.
+                // If logic falls through (e.g. keep PNG as PNG), we need to copy it here ourselves
+                // OR relies on `copy_project` to catch it?
+                // IF we want `copy_project` to catch it, we DO NOT add to `processedSourceFiles`.
+                // IF we want to move it ourselves, we do.
+                
+                if (!converted) {
+                    // We are in "Optimization Phase". If we don't optimize, we leave it for the Copy Phase?
+                    // YES.
+                } else {
+                    processedSourceFiles.push(inputPath);
                     
-                    // So we calculate relative path from `MediaAssets` root.
-                    // For Input:
-                    const mediaAssetsPath = await join(projectRoot, "MediaAssets");
-                    const oldRel = inputPath.replace(mediaAssetsPath, "").replace(/\\/g, "/");
-                    
-                    // For Output:
-                    // It is inside `optimizedMediaAssets`
-                    const newRel = finalPath.replace(optimizedMediaAssets, "").replace(/\\/g, "/");
-                    
-                    if (oldRel !== newRel) {
-                        mappings.push({
-                            old_virtual_path: oldRel, 
-                            new_virtual_path: newRel
-                        });
+                    if (optMode === 'project') {
+                        const mediaAssetsPath = await join(projectRoot, "MediaAssets");
+                        const oldRel = inputPath.replace(mediaAssetsPath, "").replace(/\\/g, "/");
+                        const newRel = finalPath.replace(optimizedMediaAssets, "").replace(/\\/g, "/");
+                        
+                        if (oldRel !== newRel) {
+                            mappings.push({
+                                old_virtual_path: oldRel, 
+                                new_virtual_path: newRel
+                            });
+                        }
                     }
                 }
                 
@@ -359,12 +353,31 @@ function App() {
             }
             
             completed++;
-            setProgress((completed / filesToProcess.length) * 100);
+            setProgress((completed / validFiles.length) * 100);
         }
 
-        // XML Updates in TARGET
-        if (mappings.length > 0 && !abortRef.current) {
-            addLog(`Updating references in XML files (in Optimized folder)...`, 'process');
+        // 3. COPY PHASE (Project Mode Only)
+        if (optMode === 'project' && !abortRef.current) {
+            addLog(`Copying remaining project files...`, 'process');
+            setCurrentFile("Syncing structure...");
+            try {
+                 await invoke("copy_project", { 
+                     source: projectRoot, 
+                     target: targetRoot,
+                     excludes: processedSourceFiles 
+                 });
+                 addLog(`Structure synced.`, 'success');
+            } catch (e) {
+                 addLog(`Copy failed: ${e}`, 'error');
+                 setProcessing(false);
+                 return;
+            }
+        }
+
+        // XML Updates in TARGET (Only Project Mode)
+        if (optMode === 'project' && mappings.length > 0 && !abortRef.current) {
+// ... existing XML logic ...
+            addLog(`Updating references in XML files...`, 'process');
             
             // Map original XML paths to Target XML paths
             const targetXmls = [];
@@ -379,16 +392,17 @@ function App() {
                     mappings, 
                     xmlPaths: targetXmls 
                 });
-                addLog(`Updated ${count} XML files in Optimized folder.`, 'success');
+                addLog(`Updated ${count} XML files.`, 'success');
             } catch (e) {
                 addLog(`XML Update Failed: ${e}`, 'error');
             }
         }
         
-        if (zipSource && !abortRef.current) {
+        // Zip Repacking (Only Project Mode)
+        if (optMode === 'project' && zipSource && !abortRef.current) {
             addLog("Repacking optimized project...", 'process');
             setCurrentFile("Archiving... (This may take a while)");
-            setFileProgress(100); // Set to 100 to fill bar, but class will handle animation
+            setFileProgress(100); 
 
             try {
                 const ext = await extname(zipSource);
@@ -410,7 +424,11 @@ function App() {
         
         setProcessing(false);
         addLog("Optimization Complete!", 'success');
-        if (!zipSource) {
+        if (optMode === 'folder') {
+             addLog(`Output folder ready: ${targetRoot}`, 'success');
+             // Open folder?
+             // await invoke("open_folder", { path: targetRoot }); // if exists
+        } else if (!zipSource) {
             addLog(`Output available in: ${targetRoot}`, 'success');
         }
     };
