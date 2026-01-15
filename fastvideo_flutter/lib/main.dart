@@ -1,9 +1,6 @@
-import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'fast_video_player.dart';
 
 void main() {
   runApp(const MyApp());
@@ -33,13 +30,39 @@ class VideoPlayerScreen extends StatefulWidget {
 }
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
+  final FastVideoPlayerController _controller = FastVideoPlayerController();
   bool _permissionGranted = false;
-  MethodChannel? _channel;
+  
+  // UI State
+  String _eventLog = "";
+  double _volume = 5.0; // 0-10
+  double _progress = 0.0;
+  double _duration = 1.0;
 
   @override
   void initState() {
     super.initState();
     _requestPermission();
+    _listenToEvents();
+  }
+  
+  void _listenToEvents() {
+    _controller.events.listen((event) {
+      if (mounted) {
+        setState(() {
+           if (event.type == FastVideoEventType.progress) {
+             _progress = event.position!.inSeconds.toDouble();
+             _duration = event.duration!.inSeconds.toDouble();
+             // Don't log every progress event to avoid spam
+           } else {
+             _eventLog = "$event";
+             if (event.type == FastVideoEventType.initialized) {
+               _duration = event.duration!.inSeconds.toDouble();
+             }
+           }
+        });
+      }
+    });
   }
 
   Future<void> _requestPermission() async {
@@ -54,37 +77,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
-  String _statsText = "Loading stats...";
-  String _decoderText = "";
-
-  void _onPlatformViewCreated(int id) {
-    _channel = MethodChannel('native_video_player_channel_$id');
-    _channel?.setMethodCallHandler((call) async {
-      if (call.method == "updateStats") {
-        setState(() {
-          _statsText = call.arguments as String;
-        });
-      }
-      if (call.method == "updateDecoder") {
-         setState(() {
-          _decoderText = "Decoder: ${call.arguments}";
-        });
-      }
-    });
-  }
-
-  int _viewId = 0;
-  String _currentVideo = "test4k";
-
-  Future<void> _playVideo(String name) async {
-    // Instead of calling method channel, we trigger a REBUILD of the platform view.
-    // This matches the Native App's "key()" strategy which destroys the old surface.
-    setState(() {
-      _viewId++;
-      _currentVideo = name;
-      _statsText = "Loading $name...";
-      _decoderText = "";
-    });
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
   @override
@@ -95,33 +91,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         children: [
           if (_permissionGranted)
             Positioned.fill(
-              // Key ensures the widget tree destroys the old PlatformView
-              key: ValueKey(_viewId), 
-              child: PlatformViewLink(
-                viewType: 'native_video_player',
-                surfaceFactory: (context, controller) {
-                  return AndroidViewSurface(
-                    controller: controller as AndroidViewController,
-                    gestureRecognizers: const <Factory<OneSequenceGestureRecognizer>>{},
-                    hitTestBehavior: PlatformViewHitTestBehavior.opaque,
-                  );
-                },
-                onCreatePlatformView: (params) {
-                  return PlatformViewsService.initSurfaceAndroidView(
-                    id: params.id,
-                    viewType: 'native_video_player', // Match registered factory name
-                    layoutDirection: TextDirection.ltr,
-                    // Pass the video name to the new view
-                    creationParams: {'videoName': _currentVideo}, 
-                    creationParamsCodec: const StandardMessageCodec(),
-                    onFocus: () {
-                      params.onFocusChanged(true);
-                    },
-                  )
-                  ..addOnPlatformViewCreatedListener(params.onPlatformViewCreated)
-                  ..addOnPlatformViewCreatedListener(_onPlatformViewCreated)
-                  ..create();
-                },
+              child: FastVideoPlayer(
+                controller: _controller,
+                initialVideo: "test4k", // Default video
               ),
             ),
           
@@ -129,41 +101,120 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           Positioned(
             top: 40,
             left: 16,
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              color: Colors.black54,
-              child: Text(
-                "$_statsText\n$_decoderText",
-                style: const TextStyle(color: Colors.yellow, fontSize: 12),
-              ),
+            right: 16,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ValueListenableBuilder<String>(
+                  valueListenable: _controller.statsNotifier,
+                  builder: (ctx, val, _) => Text(
+                    val,
+                    style: const TextStyle(color: Colors.yellow, fontSize: 12),
+                  ),
+                ),
+                ValueListenableBuilder<String>(
+                  valueListenable: _controller.decoderNotifier,
+                  builder: (ctx, val, _) => Text(
+                    val,
+                    style: const TextStyle(color: Colors.cyan, fontSize: 12),
+                  ),
+                ),
+                Text(
+                  "Event: $_eventLog",
+                  style: const TextStyle(color: Colors.green, fontSize: 12),
+                ),
+              ],
             ),
           ),
 
-          // Resolution Switching UI
+          // Controls UI
           Positioned(
-            bottom: 50,
+            bottom: 30,
             left: 0,
             right: 0,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                FilledButton(
-                  onPressed: () => _playVideo('test1080'),
-                  child: const Text('1080p'),
-                ),
-                FilledButton(
-                  onPressed: () => _playVideo('test2k'),
-                  child: const Text('2K'),
-                ),
-                FilledButton(
-                  onPressed: () => _playVideo('test4k'),
-                  child: const Text('4K'),
-                ),
-                FilledButton(
-                  onPressed: _showCustomDialog,
-                  child: const Text('Custom'),
-                ),
-              ],
+            child: Container(
+              color: Colors.black54,
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Progress Bar
+                  Row(
+                    children: [
+                      Text("${_progress.toInt()}s", style: const TextStyle(color: Colors.white)),
+                      Expanded(
+                        child: Slider(
+                          value: _progress.clamp(0, _duration),
+                          min: 0,
+                          max: _duration > 0 ? _duration : 1, // Avoid divide by zero
+                          onChanged: (val) {
+                             _controller.seekTo(val.toInt());
+                          },
+                        ),
+                      ),
+                      Text("${_duration.toInt()}s", style: const TextStyle(color: Colors.white)),
+                    ],
+                  ),
+                  
+                  // Buttons
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                            icon: const Icon(Icons.play_arrow, color: Colors.white),
+                            onPressed: () => _controller.play(),
+                        ),
+                        IconButton(
+                            icon: const Icon(Icons.pause, color: Colors.white),
+                            onPressed: () => _controller.pause(),
+                        ),
+                        const SizedBox(width: 10),
+                        const Icon(Icons.volume_up, color: Colors.white, size: 20),
+                        SizedBox(
+                          width: 100,
+                          child: Slider(
+                            value: _volume,
+                            min: 0,
+                            max: 10,
+                            onChanged: (val) {
+                              setState(() { _volume = val; });
+                              _controller.setVolume(val);
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  // Load Buttons
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        TextButton(
+                          onPressed: () => _controller.load('test1080'),
+                          child: const Text('1080p'),
+                        ),
+                        TextButton(
+                          onPressed: () => _controller.load('test2k'),
+                          child: const Text('2K'),
+                        ),
+                        TextButton(
+                          onPressed: () => _controller.load('test4k'),
+                          child: const Text('4K'),
+                        ),
+                        TextButton(
+                          onPressed: _showCustomDialog,
+                          child: const Text('Custom'),
+                        ),
+                      ],
+                    ),
+                  )
+                ],
+              ),
             ),
           ),
           
@@ -185,12 +236,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Enter Filename'),
+          title: const Text('Enter Filename / Path'),
           content: TextField(
             onChanged: (value) {
               filename = value;
             },
-            decoration: const InputDecoration(hintText: "video.mp4"),
+            decoration: const InputDecoration(hintText: "video.mp4 or /path/to/video"),
           ),
           actions: <Widget>[
             TextButton(
@@ -203,7 +254,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               child: const Text('Play'),
               onPressed: () {
                 if (filename != null && filename!.isNotEmpty) {
-                  _playVideo(filename!);
+                  _controller.load(filename!);
                 }
                 Navigator.of(context).pop();
               },

@@ -1,0 +1,3 @@
+/Users/vidhanth/Projects/others/fastvideo/fastvideo_flutter/android/src/main/kotlin/com/vidhanth/fastvideo/fastvideo_flutter/NativeVideoView.kt
+/Users/vidhanth/Projects/others/fastvideo/fastvideo_flutter/android/src/main/kotlin/com/vidhanth/fastvideo/fastvideo_flutter/FastVideoPlayerPlugin.kt
+/Users/vidhanth/Projects/others/fastvideo/fastvideo_flutter/android/src/main/kotlin/com/vidhanth/fastvideo/fastvideo_flutter/NativeVideoViewFactory.kt

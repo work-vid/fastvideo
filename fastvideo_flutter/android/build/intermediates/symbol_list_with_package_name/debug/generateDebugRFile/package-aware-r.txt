@@ -1,0 +1,1 @@
+com.vidhanth.fastvideo.fastvideo_flutter
