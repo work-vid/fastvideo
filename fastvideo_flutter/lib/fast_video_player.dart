@@ -113,6 +113,12 @@ class FastVideoPlayerController {
     await _channel?.invokeMethod('seekTo', {'position': seconds});
   }
 
+  /// Enable or disable video looping
+  Future<void> setLooping(bool looping) async {
+    if (!_isInitialized) return;
+    await _channel?.invokeMethod('setLooping', {'looping': looping});
+  }
+
   void dispose() {
     _channel?.invokeMethod('dispose');
     _eventStreamController.close();
@@ -125,6 +131,7 @@ class FastVideoPlayer extends StatelessWidget {
   final double? width;
   final double? height;
   final String? initialVideo; // Optional, to load on creation
+  final bool showControls;
 
   const FastVideoPlayer({
     Key? key, 
@@ -132,6 +139,7 @@ class FastVideoPlayer extends StatelessWidget {
     this.width,
     this.height,
     this.initialVideo,
+    this.showControls = true,
   }) : super(key: key);
 
   @override
@@ -157,7 +165,10 @@ class FastVideoPlayer extends StatelessWidget {
             id: params.id,
             viewType: 'native_video_player',
             layoutDirection: TextDirection.ltr,
-            creationParams: {'videoName': initialVideo ?? ""},
+            creationParams: {
+              'videoName': initialVideo ?? "",
+              'showControls': showControls,
+            },
             creationParamsCodec: const StandardMessageCodec(),
             onFocus: () {
               params.onFocusChanged(true);

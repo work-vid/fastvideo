@@ -32,12 +32,16 @@ class VideoPlayerScreen extends StatefulWidget {
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   final FastVideoPlayerController _controller = FastVideoPlayerController();
   bool _permissionGranted = false;
-
+  
   // UI State
   String _eventLog = "";
   double _volume = 5.0; // 0-10
   double _progress = 0.0;
   double _duration = 1.0;
+  
+  // New features state
+  bool _looping = false;
+  bool _showControls = true;
 
   @override
   void initState() {
@@ -45,7 +49,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     _requestPermission();
     _listenToEvents();
   }
-
+  
   void _listenToEvents() {
     _controller.events.listen((event) {
       if (mounted) {
@@ -94,11 +98,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       body: Stack(
         children: [
           if (_permissionGranted)
-            FastVideoPlayer(
-              controller: _controller,
-              initialVideo: "test4k", // Default video
+            // Rebuild player when showControls changes to update creation param
+            KeyedSubtree(
+              // Using ValueKey ensures the widget tree is rebuilt when showControls changes
+              // but we need to verify if the underlying PlatformView is destroyed/recreated.
+              // In this implementation it should be, as KeyedSubtree propagates identity.
+              key: ValueKey(_showControls),
+              child: FastVideoPlayer(
+                controller: _controller,
+                initialVideo: "test4k", // Default video
+                showControls: _showControls,
+              ),
             ),
-
+          
           // Debug Overlay
           Positioned(
             top: 40,
@@ -155,6 +167,41 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                         ),
                       ),
                       Text("${_duration.toInt()}s", style: const TextStyle(color: Colors.white)),
+                    ],
+                  ),
+
+                  // Toggles
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                        Row(
+                           children: [
+                               Checkbox(
+                                   value: _looping,
+                                   onChanged: (val) {
+                                       setState(() { _looping = val ?? false; });
+                                       _controller.setLooping(_looping);
+                                   },
+                                   fillColor: MaterialStateProperty.all(Colors.white),
+                                   checkColor: Colors.black,
+                               ),
+                               const Text("Loop", style: TextStyle(color: Colors.white)),
+                           ], 
+                        ),
+                        const SizedBox(width: 20),
+                        Row(
+                           children: [
+                               Checkbox(
+                                   value: _showControls,
+                                   onChanged: (val) {
+                                       setState(() { _showControls = val ?? true; });
+                                   },
+                                   fillColor: MaterialStateProperty.all(Colors.white),
+                                   checkColor: Colors.black,
+                               ),
+                               const Text("Native Controls", style: TextStyle(color: Colors.white)),
+                           ], 
+                        ),
                     ],
                   ),
 
@@ -221,7 +268,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               ),
             ),
           ),
-
+          
           if (!_permissionGranted)
             Center(
               child: ElevatedButton(
@@ -233,7 +280,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       ),
     );
   }
-
+  
   Future<void> _showCustomDialog() async {
     String? filename;
     return showDialog<void>(

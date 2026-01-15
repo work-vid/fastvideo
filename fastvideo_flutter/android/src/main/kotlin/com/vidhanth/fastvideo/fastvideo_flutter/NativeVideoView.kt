@@ -30,6 +30,7 @@ class NativeVideoView(
     private val playerView: PlayerView = PlayerView(context)
     private var player: ExoPlayer? = null
     private val methodChannel: MethodChannel = MethodChannel(messenger, "native_video_player_channel_$id")
+    private var showControls: Boolean = true
     
     private val progressHandler = Handler(Looper.getMainLooper())
     private val progressRunnable = object : Runnable {
@@ -153,7 +154,8 @@ class NativeVideoView(
             }
 
         playerView.player = player
-        playerView.useController = false 
+        playerView.useController = showControls 
+        playerView.controllerAutoShow = showControls
         
         loadVideoFile(videoNameOrPath)
     }
@@ -164,6 +166,11 @@ class NativeVideoView(
         
         val rawName = creationParams?.get("videoName") as? String
         val videoName = rawName ?: "test4k"
+        
+        if (creationParams?.containsKey("showControls") == true) {
+            showControls = creationParams["showControls"] as Boolean
+        }
+
         setupPlayer(videoName)
     }
 
@@ -248,6 +255,11 @@ class NativeVideoView(
                 } else {
                     result.error("INVALID", "Position required", null)
                 }
+            }
+            "setLooping" -> {
+                 val looping = call.argument<Boolean>("looping") ?: false
+                 player?.repeatMode = if (looping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                 result.success(null)
             }
             "dispose" -> {
                 dispose()
