@@ -72,7 +72,7 @@ jobs:
         with:
           projectPath: 'converter'
           tagName: ${{ github.ref_name }}
-          releaseName: 'FastVideo Converter v__VERSION__'
+          releaseName: 'Baetho Optimizer v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
