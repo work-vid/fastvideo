@@ -168,6 +168,16 @@ button {
     font-weight: 500;
 }
 
+.btn-outline {
+    background: transparent;
+    color: var(--text-primary);
+    padding: 0.75rem 1.5rem;
+    border: 1px solid var(--border-color);
+}
+.btn-outline:hover { background: rgba(255, 255, 255, 0.1); }
+.btn-outline:active { transform: translateY(0); }
+.btn-outline:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
 .btn-primary {
     background: var(--primary-color);
     color: white;

@@ -505,8 +505,8 @@ function App() {
                 <div className="project-controls">
                      {!projectRoot ? (
                          <div style={{display:'flex', gap:'0.5rem', width:'100%'}}>
-                             <button className="btn-primary" style={{flex:1}} onClick={() => selectInput('dir')}>Folder</button>
-                             <button className="btn-secondary" style={{flex:1}} onClick={() => selectInput('file')}>Archive</button>
+                             <button className="btn-outline" style={{flex:1}} onClick={() => selectInput('dir')}>Folder</button>
+                             <button className="btn-outline" style={{flex:1}} onClick={() => selectInput('file')}>Project</button>
                          </div>
                      ) : (
                          <div className="project-info">
