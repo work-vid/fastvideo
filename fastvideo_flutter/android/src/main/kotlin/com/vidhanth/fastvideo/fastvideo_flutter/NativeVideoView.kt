@@ -1,6 +1,7 @@
 package com.vidhanth.fastvideo.fastvideo_flutter
 
 import android.content.Context
+import android.graphics.Color
 import android.net.Uri
 import android.os.Environment
 import android.os.Handler
@@ -156,6 +157,10 @@ class NativeVideoView(
         playerView.player = player
         playerView.useController = showControls 
         playerView.controllerAutoShow = showControls
+        
+        // Make background transparent to avoid black flashes
+        playerView.setShutterBackgroundColor(Color.TRANSPARENT)
+        playerView.setBackgroundColor(Color.TRANSPARENT)
         
         loadVideoFile(videoNameOrPath)
     }
