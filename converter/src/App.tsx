@@ -13,6 +13,8 @@ import { FileNode, ScanResult, ImageSettings } from "./types";
 const FolderIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>);
 const PlayIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>);
 const StopIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="6" width="12" height="12"/></svg>);
+const ChevronUp = () => (<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 15l-6-6-6 6"/></svg>);
+const ChevronDown = () => (<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>);
 
 function collectPaths(node: FileNode, paths: Set<string>) {
     paths.add(node.path);
@@ -297,20 +299,75 @@ function App() {
                          converted = true;
                     }
                 } else if (isVideo) {
-                    // Convert to H.265
                     finalPath = await join(parentDir, await basename(targetFile, "." + ext) + ".mp4");
                     
-                    const args = [
-                        "-y", 
-                        "-i", inputPath, 
-                        "-c:v", "libx265",
-                        "-crf", "23",
-                        "-preset", "fast",
-                        "-c:a", "aac",
-                        "-b:a", "128k",
-                        "-tag:v", "hvc1",
-                        finalPath 
-                    ];
+                    let args: string[] = [];
+                    
+                    if (imgSettings.videoOverride && imgSettings.videoOverride.trim().length > 0) {
+                         // Parse Override
+                         // Replace {input} and {output}
+                         // We need to be careful about quoting. 
+                         // Simple approach: Replace placeholder with "Placeholder", split by space, then map back to real path.
+                         // Better: User provides raw args separated by spaces.
+                         // Best: Replace {input} with actual input path, {output} with actual output path.
+                         // But `Command.sidecar` expects array of args. Splitting a string correctly (respecting quotes) is hard.
+                         
+                         // ASSUMPTION: User provides command line string. checking if we can simple split by space?
+                         // " -c:v libx265 ... "
+                         // If paths have spaces, this breaks.
+                         // But {input} will be replaced by the absolute path which might have spaces.
+                         // `Command.sidecar` arguments are passed as array.
+                         
+                         // Let's implement a simple parser that respects quotes or just simple split if no quotes used?
+                         // Actually, standard ffmpeg separation is space.
+                         
+                         // Check for extension override in command (e.g. {output}.mov)
+                         const extMatch = imgSettings.videoOverride.match(/{output}(\.[a-zA-Z0-9]+)/);
+                         if (extMatch) {
+                             const newExt = extMatch[1];
+                             finalPath = finalPath.replace(/\.mp4$/, newExt);
+                         }
+
+                         let cmd = imgSettings.videoOverride
+                            .replace(/{input}/g, inputPath)
+                            .replace(/{output}(\.[a-zA-Z0-9]+)/g, finalPath) // Replace explicit extension usage
+                            .replace(/{output}/g, finalPath); // Fallback for standard usage
+                            
+                         // Naive split by space (handling quotes is complex without a library)
+                         // But wait, `tauri-plugin-shell` takes `args: string[]`. 
+                         // If we pass a single string, it might fail or treat as one arg.
+                         // We need to tokenize `cmd`.
+                         
+                         // Regex to match spaces outside quotes
+                         const regex = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
+                         const matches = [];
+                         let match;
+                         while ((match = regex.exec(cmd)) !== null) {
+                             if (match[1]) matches.push(match[1]);
+                             else if (match[2]) matches.push(match[2]);
+                             else matches.push(match[0]);
+                         }
+                         args = matches;
+                        
+                         // The user might put "ffmpeg -i ..." we should strip "ffmpeg" if present?
+                         if (args.length > 0 && args[0].toLowerCase() === 'ffmpeg') {
+                             args.shift();
+                         }
+                         
+                    } else {
+                        // Default Logic
+                        args = [
+                            "-y", 
+                            "-i", inputPath, 
+                            "-c:v", "libx265",
+                            "-crf", "23",
+                            "-preset", "fast",
+                            "-c:a", "aac",
+                            "-b:a", "128k",
+                            "-tag:v", "hvc1",
+                            finalPath 
+                        ];
+                    }
                     
                     setFileProgress(0);
                     await runFfmpeg(args, (p) => setFileProgress(p));
@@ -596,8 +653,42 @@ function App() {
                          <input type="checkbox" checked={imgSettings.convert_jpg} onChange={e => setImgSettings({...imgSettings, convert_jpg: e.target.checked})} />
                      </div>
                      <div className="setting-row">
-                         <label>Quality ({imgSettings.quality})</label>
-                         <input type="range" min="10" max="100" value={imgSettings.quality} onChange={e => setImgSettings({...imgSettings, quality: parseInt(e.target.value)})} />
+                          <label>Quality (0-100)</label>
+                          <div className="number-control">
+                              <input 
+                                  type="number" 
+                                  className="input-number no-spinner"
+                                  min="1" 
+                                  max="100" 
+                                  value={imgSettings.quality === 0 ? '' : imgSettings.quality} 
+                                  onChange={e => {
+                                      const val = e.target.value === '' ? 0 : parseInt(e.target.value);
+                                      setImgSettings({...imgSettings, quality: Math.min(100, Math.max(0, val))}); // Allow 0 typing temporarily
+                                  }} 
+                                  onBlur={() => {
+                                       // Enforce min 1 on blur
+                                       if (imgSettings.quality < 1) setImgSettings({...imgSettings, quality: 75});
+                                  }}
+                              />
+                              <div className="spin-btns">
+                                  <button onClick={() => setImgSettings(s => ({...s, quality: Math.min(100, s.quality + 1)}))} className="spin-btn up"><ChevronUp/></button>
+                                  <button onClick={() => setImgSettings(s => ({...s, quality: Math.max(1, s.quality - 1)}))} className="spin-btn down"><ChevronDown/></button>
+                              </div>
+                          </div>
+                     </div>
+                     
+                     <div className="setting-row" style={{flexDirection:'column', alignItems:'flex-start', gap:'0.5rem'}}>
+                         <label>Video Command Override <span style={{fontSize:'0.7rem', opacity:0.7}}>(optional)</span></label>
+                         <textarea 
+                             className="input-textarea"
+                             placeholder="-c:v libx265 -crf 28 ... {input} {output}"
+                             value={imgSettings.videoOverride || ''}
+                             onChange={e => setImgSettings({...imgSettings, videoOverride: e.target.value})}
+                         />
+                         <div style={{fontSize:'0.65rem', color:'var(--text-secondary)'}}>
+                             Use <code>{'{input}'}</code> and <code>{'{output}'}</code> as placeholders. 
+                             Leave empty for default H.265 optimization.
+                         </div>
                      </div>
                  </div>
 

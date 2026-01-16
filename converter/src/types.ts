@@ -15,4 +15,5 @@ export interface ImageSettings {
     convert_png: boolean;
     convert_jpg: boolean;
     quality: number;
+    videoOverride?: string;
 }
