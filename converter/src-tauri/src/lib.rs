@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::fs;
 use serde::{Serialize, Deserialize};
 use walkdir::WalkDir;
@@ -48,6 +48,18 @@ fn get_media_type(path: &Path) -> Option<String> {
     } else {
         None
     }
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let p = path.to_path_buf();
+    #[cfg(windows)]
+    {
+        let s = p.to_string_lossy();
+        if s.starts_with(r"\\?\") {
+            return PathBuf::from(&s[4..]);
+        }
+    }
+    p
 }
 
 fn build_tree(path: &Path) -> Option<FileNode> {
@@ -243,7 +255,8 @@ async fn compress_zip(source_dir: String, zip_path: String) -> Result<String, St
 
             let name = path.strip_prefix(src_path)
                 .map_err(|e| e.to_string())?
-                .to_string_lossy();
+                .to_string_lossy()
+                .replace("\\", "/"); // ZIP expects forward slashes
                 
             if name.is_empty() { continue; } // Skip root dir itself
 
@@ -278,38 +291,60 @@ async fn copy_project(source: String, target: String, excludes: Vec<String>) -> 
 
     let mut count = 0;
     
-    // Canonicalize paths to ensure correct prefix checking
+    // Recursion guard setup
     let target_abs = fs::canonicalize(target_path).unwrap_or(target_path.to_path_buf());
+    let target_check = normalize_path(&target_abs);
 
-    for entry in WalkDir::new(source_path).into_iter().filter_map(|e| e.ok()) {
+    let source_len = source_path.components().count();
+    let walker = WalkDir::new(source_path).into_iter();
+
+    for entry in walker.filter_entry(|e| {
+        if is_hidden(e) { return false; }
+        
+        // Recursion Safe Check: Stop if we are about to enter the target directory
+        if e.path().is_dir() {
+            if let Ok(entry_abs) = fs::canonicalize(e.path()) {
+                 if normalize_path(&entry_abs) == target_check {
+                     return false;
+                 }
+            }
+        }
+        true
+    }) {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        
         let path = entry.path();
         
-        // Skip hidden files/dirs (optional, but consistent with scan)
-        if is_hidden(&entry) {
+        // Safety check to ensure we didn't somehow enter the target
+        if path.starts_with(&target_check) {
             continue;
         }
 
-        // Check Exclusions (Absolute Path String)
+        // Check Exclusions
         let path_str = path.to_string_lossy().to_string();
         if exclude_set.contains(&path_str) {
             continue;
         }
 
-        // Calculate relative path
-        let relative = match path.strip_prefix(source_path) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
+        // Relative Path Construction using Components
+        // This is robust formatting that works on Windows/Mac/Linux
+        let path_components = path.components();
+        
+        // Skip the components that are part of the source root
+        // Reconstruct destination by appending the remaining components
+        let mut dest = target_path.to_path_buf();
+        let mut has_relative = false;
 
-        if relative.as_os_str().is_empty() {
-            continue; // Root folder
+        for component in path_components.skip(source_len) {
+            dest.push(component);
+            has_relative = true;
         }
 
-        let dest = target_path.join(relative);
-
-        // AUTO-EXCLUDE: If the file being copied IS inside the target directory (e.g. recursive copy into self)
-        if path.starts_with(&target_abs) {
-            continue;
+        if !has_relative {
+            continue; // Skip the root folder itself
         }
 
         if path.is_dir() {
@@ -317,7 +352,6 @@ async fn copy_project(source: String, target: String, excludes: Vec<String>) -> 
                 fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
             }
         } else {
-            // Ensure parent exists
             if let Some(parent) = dest.parent() {
                 if !parent.exists() {
                     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
