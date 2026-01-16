@@ -176,14 +176,30 @@ fn update_xml_refs(mappings: Vec<PathMapping>, xml_paths: Vec<String>) -> Result
     Ok(count)
 }
 
+use std::sync::Mutex;
+use tauri::{Manager, State, RunEvent};
+
+struct AppState {
+    temp_dirs: Mutex<Vec<String>>,
+}
+
 #[tauri::command]
-async fn extract_zip(zip_path: String, dest_path: String) -> Result<String, String> {
+async fn extract_zip(
+    zip_path: String, 
+    dest_path: String, 
+    state: State<'_, AppState>
+) -> Result<String, String> {
     let file = fs::File::open(&zip_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
     let dest = Path::new(&dest_path);
 
     if !dest.exists() {
         fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    }
+    
+    // Register temp path in state
+    if let Ok(mut dirs) = state.temp_dirs.lock() {
+        dirs.push(dest_path.clone());
     }
 
     for i in 0..archive.len() {
@@ -326,6 +342,9 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(AppState {
+            temp_dirs: Mutex::new(Vec::new()),
+        })
         .invoke_handler(tauri::generate_handler![
             greet, 
             list_video_files,
@@ -339,8 +358,26 @@ pub fn run() {
             extract_zip,
             compress_zip
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            match event {
+                RunEvent::Exit => {
+                    let state = app_handle.state::<AppState>();
+                    let dirs_to_delete = if let Ok(dirs) = state.temp_dirs.lock() {
+                        dirs.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    
+                    for dir in dirs_to_delete {
+                        let _ = std::fs::remove_dir_all(&dir);
+                        println!("Cleaned up temp dir: {}", dir);
+                    }
+                }
+                _ => {}
+            }
+        });
 }
 
 // Re-declaring list_video_files to keep compatibility
