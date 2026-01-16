@@ -303,55 +303,58 @@ function App() {
                     
                     let args: string[] = [];
                     
-                    if (imgSettings.videoOverride && imgSettings.videoOverride.trim().length > 0) {
-                         // Parse Override
-                         // Replace {input} and {output}
-                         // We need to be careful about quoting. 
-                         // Simple approach: Replace placeholder with "Placeholder", split by space, then map back to real path.
-                         // Better: User provides raw args separated by spaces.
-                         // Best: Replace {input} with actual input path, {output} with actual output path.
-                         // But `Command.sidecar` expects array of args. Splitting a string correctly (respecting quotes) is hard.
-                         
-                         // ASSUMPTION: User provides command line string. checking if we can simple split by space?
-                         // " -c:v libx265 ... "
-                         // If paths have spaces, this breaks.
-                         // But {input} will be replaced by the absolute path which might have spaces.
-                         // `Command.sidecar` arguments are passed as array.
-                         
-                         // Let's implement a simple parser that respects quotes or just simple split if no quotes used?
-                         // Actually, standard ffmpeg separation is space.
-                         
-                         // Check for extension override in command (e.g. {output}.mov)
+                     if (imgSettings.videoOverride && imgSettings.videoOverride.trim().length > 0) {
+                         // 1. Determine Output Path based on extension in command
+                         let currentFinalPath = finalPath;
                          const extMatch = imgSettings.videoOverride.match(/{output}(\.[a-zA-Z0-9]+)/);
                          if (extMatch) {
                              const newExt = extMatch[1];
-                             finalPath = finalPath.replace(/\.mp4$/, newExt);
+                             currentFinalPath = currentFinalPath.replace(/\.mp4$/, newExt);
+                             finalPath = currentFinalPath; // Update the main variable for downstream logic
                          }
 
-                         let cmd = imgSettings.videoOverride
-                            .replace(/{input}/g, inputPath)
-                            .replace(/{output}(\.[a-zA-Z0-9]+)/g, finalPath) // Replace explicit extension usage
-                            .replace(/{output}/g, finalPath); // Fallback for standard usage
-                            
-                         // Naive split by space (handling quotes is complex without a library)
-                         // But wait, `tauri-plugin-shell` takes `args: string[]`. 
-                         // If we pass a single string, it might fail or treat as one arg.
-                         // We need to tokenize `cmd`.
-                         
-                         // Regex to match spaces outside quotes
+                         // 2. Prepare Command for Tokenization
+                         // We use safe placeholders preventing space-splitting issues
+                         const PLACEHOLDER_INPUT = "___INPUT_FILE_TOKEN___";
+                         const PLACEHOLDER_OUTPUT = "___OUTPUT_FILE_TOKEN___";
+
+                         // Replace user tags with safe tokens
+                         // We handle {output}.ext by replacing the whole thing with the token
+                         let cmdStr = imgSettings.videoOverride
+                            .replace(/{input}/g, PLACEHOLDER_INPUT)
+                            .replace(/{output}(\.[a-zA-Z0-9]+)/g, PLACEHOLDER_OUTPUT) 
+                            .replace(/{output}/g, PLACEHOLDER_OUTPUT);
+
+                         // 3. Tokenize (Split by spaces while respecting quotes)
                          const regex = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
                          const matches = [];
                          let match;
-                         while ((match = regex.exec(cmd)) !== null) {
+                         while ((match = regex.exec(cmdStr)) !== null) {
                              if (match[1]) matches.push(match[1]);
                              else if (match[2]) matches.push(match[2]);
                              else matches.push(match[0]);
                          }
                          args = matches;
-                        
-                         // The user might put "ffmpeg -i ..." we should strip "ffmpeg" if present?
+
+                         // 4. Clean up args
                          if (args.length > 0 && args[0].toLowerCase() === 'ffmpeg') {
                              args.shift();
+                         }
+
+                         // 5. Restore Paths
+                         args = args.map(arg => {
+                             if (arg === PLACEHOLDER_INPUT) return inputPath;
+                             if (arg === PLACEHOLDER_OUTPUT) return currentFinalPath;
+                             // Handle cases where user might have attached flags? unlikely if spaces correct
+                             // But mostly just exact match replacement
+                             return arg
+                                .replace(PLACEHOLDER_INPUT, inputPath)
+                                .replace(PLACEHOLDER_OUTPUT, currentFinalPath);
+                         });
+                         
+                         // 6. Ensure Overwrite (-y)
+                         if (!args.includes('-y')) {
+                             args.unshift('-y');
                          }
                          
                     } else {
