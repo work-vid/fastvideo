@@ -1,8 +1,8 @@
 :root {
   --bg-color: #121214;
   --surface-color: #1e1e24;
-  --primary-color: #F163D5;
-  --primary-hover: #D946BD;
+  --primary-color: #E73176;
+  --primary-hover: #cf2866;
   --text-primary: #ffffff;
   --text-secondary: #a0a0b0;
   --border-color: #333340;
@@ -52,7 +52,7 @@ body {
   margin: 0 0 1.5rem 0;
   font-weight: 600;
   letter-spacing: -0.01em;
-  background: linear-gradient(to right, #F163D5, #bbedfc);
+  background: linear-gradient(to right, #E73176, #bbedfc);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
@@ -182,9 +182,9 @@ button {
     background: var(--primary-color);
     color: white;
     padding: 0.75rem 1.5rem;
-    box-shadow: 0 4px 14px 0 rgba(241, 99, 213, 0.39);
+    box-shadow: 0 4px 14px 0 rgba(231, 49, 118, 0.39);
 }
-.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(241, 99, 213, 0.23); }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(231, 49, 118, 0.23); }
 .btn-primary:active { transform: translateY(0); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
 
@@ -340,6 +340,41 @@ button {
 /* Animations */
 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 .animate-fade-in { animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+
+/* Custom Checkbox */
+input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s;
+}
+
+input[type="checkbox"]:checked {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    left: 6px;
+    top: 2px;
+    width: 4px;
+    height: 10px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+input[type="checkbox"]:hover {
+    border-color: var(--primary-color);
+    background: rgba(255, 255, 255, 0.1);
+}
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 8px; }
