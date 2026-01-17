@@ -162,6 +162,9 @@ class NativeVideoView(
         playerView.setShutterBackgroundColor(Color.TRANSPARENT)
         playerView.setBackgroundColor(Color.TRANSPARENT)
         
+        // Keep last frame when player is reset (seamless switching)
+        playerView.setKeepContentOnPlayerReset(true)
+        
         loadVideoFile(videoNameOrPath)
     }
     
