@@ -33,10 +33,23 @@ class FastVideoPlayerController {
   final ValueNotifier<String> statsNotifier = ValueNotifier("Initializing...");
   final ValueNotifier<String> decoderNotifier = ValueNotifier("");
   
+  // Cached State for synchronous access
+  Duration _valueDuration = Duration.zero;
+  Duration _valuePosition = Duration.zero;
+  bool _valueIsPlaying = false;
+  
+  // Debounce/Throttling for seek
+  DateTime? _ignoreProgressUntil;
+  
   bool _isInitialized = false;
   bool get isInitialized => _isInitialized;
 
   Stream<FastVideoEvent> get events => _eventStreamController.stream;
+  
+  // Getters
+  Duration get duration => _valueDuration;
+  Duration get position => _valuePosition;
+  bool get isPlaying => _valueIsPlaying;
 
   /// Internal method called by the view when created
   void _attach(int viewId) {
@@ -51,28 +64,38 @@ class FastVideoPlayerController {
       final String event = args['event'];
       switch (event) {
         case 'initialized':
-          final duration = args['duration'] as int; // seconds
+          final durationSec = args['duration'] as int; // seconds
+          _valueDuration = Duration(seconds: durationSec);
            _eventStreamController.add(FastVideoEvent(
              type: FastVideoEventType.initialized, 
-             duration: Duration(seconds: duration)
+             duration: _valueDuration
            ));
           break;
         case 'started':
+           _valueIsPlaying = true;
            _eventStreamController.add(FastVideoEvent(type: FastVideoEventType.started));
           break;
          case 'paused':
+           _valueIsPlaying = false;
            _eventStreamController.add(FastVideoEvent(type: FastVideoEventType.paused));
           break;
         case 'ended':
+           _valueIsPlaying = false;
            _eventStreamController.add(FastVideoEvent(type: FastVideoEventType.ended));
           break;
         case 'progress':
+          // Ignore progress updates if we recently seeked (to avoid jumping back)
+          if (_ignoreProgressUntil != null && DateTime.now().isBefore(_ignoreProgressUntil!)) {
+            return;
+          }
           final pos = args['position'] as int;
           final dur = args['duration'] as int;
+          _valuePosition = Duration(seconds: pos);
+          _valueDuration = Duration(seconds: dur); // Ensure duration is fresh
            _eventStreamController.add(FastVideoEvent(
              type: FastVideoEventType.progress,
-             position: Duration(seconds: pos),
-             duration: Duration(seconds: dur)
+             position: _valuePosition,
+             duration: _valueDuration
            ));
           break;
       }
@@ -89,16 +112,24 @@ class FastVideoPlayerController {
     if (!_isInitialized) return;
     statsNotifier.value = "Loading $path...";
     decoderNotifier.value = "";
+    // Reset state on load? Ideally native side sends event, but let's be safe
+    _valueIsPlaying = false;
+    _valuePosition = Duration.zero;
+    _ignoreProgressUntil = null;
     await _channel?.invokeMethod('load', {'path': path});
   }
   
   Future<void> play() async {
     if (!_isInitialized) return;
+    // Optimistic update
+    _valueIsPlaying = true; 
     await _channel?.invokeMethod('play');
   }
 
   Future<void> pause() async {
     if (!_isInitialized) return;
+    // Optimistic update
+    _valueIsPlaying = false; 
     await _channel?.invokeMethod('pause');
   }
   
@@ -110,7 +141,39 @@ class FastVideoPlayerController {
 
   Future<void> seekTo(int seconds) async {
     if (!_isInitialized) return;
+    
+    // Optimistic update
+    int newPos = seconds;
+    if (newPos < 0) newPos = 0;
+    if (_valueDuration.inSeconds > 0 && newPos > _valueDuration.inSeconds) {
+       newPos = _valueDuration.inSeconds;
+    }
+    _valuePosition = Duration(seconds: newPos);
+    
+    // Ignore updates for 500ms to allow native player to catch up
+    _ignoreProgressUntil = DateTime.now().add(const Duration(milliseconds: 500));
+    
     await _channel?.invokeMethod('seekTo', {'position': seconds});
+  }
+
+  /// Shift time relative to current position
+  /// [seconds] can be positive (forward) or negative (backward)
+  Future<void> shiftTime(int seconds) async {
+    if (!_isInitialized) return;
+    
+    // Optimistic update
+    int newPos = _valuePosition.inSeconds + seconds;
+    if (newPos < 0) newPos = 0;
+    if (_valueDuration.inSeconds > 0 && newPos > _valueDuration.inSeconds) {
+      newPos = _valueDuration.inSeconds;
+    }
+    _valuePosition = Duration(seconds: newPos);
+    
+    // Ignore updates for 500ms to allow native player to catch up
+    _ignoreProgressUntil = DateTime.now().add(const Duration(milliseconds: 500));
+    
+    // Use absolute seekTo instead of relative shiftTime to prevent drift
+    await _channel?.invokeMethod('seekTo', {'position': newPos});
   }
 
   /// Enable or disable video looping

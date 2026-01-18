@@ -36,20 +36,24 @@ class NativeVideoView(
     private val progressHandler = Handler(Looper.getMainLooper())
     private val progressRunnable = object : Runnable {
         override fun run() {
-            player?.let { p ->
-                if (p.isPlaying) {
-                     val position = p.currentPosition / 1000
-                     val duration = p.duration / 1000
-                     if (duration > 0) {
-                         methodChannel.invokeMethod("onEvent", mapOf(
-                             "event" to "progress",
-                             "position" to position,
-                             "duration" to duration
-                         ))
-                     }
-                }
-            }
+            sendProgressUpdate()
             progressHandler.postDelayed(this, 1000)
+        }
+    }
+
+    private fun sendProgressUpdate() {
+        player?.let { p ->
+            // Send progress if playing OR if we just seeked (to update UI)
+            // But usually we just check if it's valid to read duration
+            val duration = p.duration / 1000
+            if (duration > 0) {
+                 val position = p.currentPosition / 1000
+                 methodChannel.invokeMethod("onEvent", mapOf(
+                     "event" to "progress",
+                     "position" to position,
+                     "duration" to duration
+                 ))
+            }
         }
     }
 
@@ -259,9 +263,26 @@ class NativeVideoView(
                 val pos = call.argument<Int>("position") // seconds
                 if (pos != null) {
                     player?.seekTo(pos * 1000L)
+                    // Immediate update to prevent stale UI
+                    sendProgressUpdate()
                     result.success(null)
                 } else {
                     result.error("INVALID", "Position required", null)
+                }
+            }
+            "shiftTime" -> {
+                val offset = call.argument<Int>("offset") // seconds (can be negative)
+                if (offset != null) {
+                    player?.let { p ->
+                        val current = p.currentPosition
+                        val newPos = max(0L, min(p.duration, current + (offset * 1000L)))
+                        p.seekTo(newPos)
+                        // Immediate update
+                        sendProgressUpdate()
+                    }
+                    result.success(null)
+                } else {
+                    result.error("INVALID", "Offset required", null)
                 }
             }
             "setLooping" -> {
